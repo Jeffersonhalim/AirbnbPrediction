@@ -1,0 +1,565 @@
+---
+title: "Airbnb Price Prediction using Multiple Linear Regression"
+author: "Christian Jefferson Halim"
+date: "12/6/2022"
+output:
+  pdf_document: 
+    fig_width: 6
+    fig_height: 4
+
+---
+
+## 1.Introduction
+ 
+### 1.1 Research Question
+
+What variables contribute to the dynamic pricing in the Airbnb rental price? 
+
+### 1.2 Background 
+
+Airbnb has been the leading company for lodging and tourism experiences worldwide. Founded in 2007, Airbnb has grown to have over 6 million listings in more than 100,000 cities worldwide, making it a leading source of alternative lodging options. One of the critical factors in Airbnb's success is its dynamic pricing model, which allows hosts to adjust their rates based on demand and availability. The price is the key factor in ensuring that it can benefit both the tenants and the customers. 
+
+### 1.3 Purpose 
+The Airbnb Dynamic pricing introduces a way that two houses next to each other can have different prices. This is because each listing is determined by various independent variables. These can include the location, size, property type (such as a house or apartment), the amenities offered by the property, etc. This paper will help to predict whether those factors come into consideration with the listing price.
+
+### 1.4 Correlation with Previous Paper
+
+This paper has some characteristics similar to other papers mentioned in phase 1. The previous papers used some similar approaches, such as calculating the mean squared error and implementing a multiple regression model, which is also implemented in this paper. However, I used a different dataset and different methods of selecting the appropriate model with Forward/ Backward Stepwise Regression of AIC, BIC, and Lasso/ Group Lasso.
+
+## 2. Methods
+
+### 2.1 Data Cleaning, Split Data, and Removing Outlier
+From the initial data, I filtered the data by selecting the 'Church-Yonge Corridor' neighborhood as my main focus, and I chose five predictor variables, which are 'room_type,' 'accommodates', 'beds', 'review_scores_rating', 'host_is_superhost'. I created two dummy variables for the categorical variables: 'room_type_dummy' and 'superhost_dummy'. I also split the dataset into two parts, a training dataset and a test dataset, which consists of a random sampling of the dataset with a percentage of 70% and 30& respectively. A training dataset will be used to train the model, while the test dataset will be used to measure the model's accuracy. Using the IQR formula, I successfully removed 24 outliers and decreased the dataset from 238 datasets to 214 datasets.
+
+```{r, include = FALSE}
+# EDA process from Phase 1 
+library(dplyr)
+library(knitr)
+airbnb_data <- read.csv('Airbnb.csv')
+airbnb_data$price = gsub("\\$", "", airbnb_data$price)
+airbnb_data$price = gsub("\\.00", "", airbnb_data$price)
+airbnb_data$price = gsub("\\,", "", airbnb_data$price)
+airbnb_data$price <- as.numeric(airbnb_data$price)
+
+#select necessary columns (5 variables)
+df <- subset(airbnb_data, neighbourhood_cleansed == 'Church-Yonge Corridor')
+df <- df[,c('room_type', 'accommodates', 'beds', 'review_scores_rating', 'host_is_superhost', 'price')]
+df$room_type_dummy <- ifelse(df$room_type == 'Entire home/apt', 1, 0)
+df$superhost_dummy <- ifelse(df$host_is_superhost == 't', 1, 0)
+df <- df[complete.cases(df), ]
+df <- df[,c('price','room_type', 'room_type_dummy','accommodates', 'beds', 'review_scores_rating', 'host_is_superhost', 'superhost_dummy')]
+df <- df[,c('price', 'room_type_dummy', 'accommodates', 'beds', 'review_scores_rating', 'superhost_dummy')]
+```
+
+```{r, include= FALSE}
+# remove outlier and divide the dataset
+dt = sort(sample(nrow(df), nrow(df)*.7))
+train <- df[dt,]
+test <- df[-dt,]
+
+Q1 <- quantile(train$price, .25)
+Q3 <- quantile(train$price, .75)
+IQR <- IQR(train$price)
+train <- subset(train, train$price > (Q1 - 1.5*IQR) & train$price < (Q3 + 1.5*IQR))
+```
+
+### 2.2 Checking Assumption
+
+The first step in building and choosing the best regression model is to check all the linear regression assumptions. By creating a scatterplot for each predictor variable, I want to see a linear relationship between the price variable and each predictor variable. For the following three assumptions, I will create multiple models first, which consist of:
+$$ y = \beta_0 +\beta_1 \ x_{room \_ type} +\beta_2 \ x_{accommodates} +\beta_3 \ x_{beds} + \beta_4 \ x_{review \_ scores \_ rating} + \beta_5 \ x_{superhost} + \epsilon $$
+I can analyze the pattern shown in the Standardized Residual vs Fitted of the entire model to satisfy the independence error and homoscedasticity assumption. The homoscedasticity assumption is violated if any pattern is shown, especially a fanning pattern where the residuals become gradually spread out in the plot. Furthermore, I will create a Normal Q-Q Plot to satisfy the normality assumption. The most crucial thing in this plot is seeing a linear pattern for each point. If there are points that made the plot not linear, I will apply a box-cox transformation by transforming the price to log(price) and formulating the data with the maximum lambda value.  
+```{r, include = FALSE}
+library(dplyr)
+library(broom)
+library(ggplot2)
+#create scatterplot to check independence for each predictor variables
+mod1 <- lm(price ~ room_type_dummy, data = train)
+mod2 <- lm(price ~ accommodates, data = train)
+mod3 <- lm(price ~ beds, data = train)
+mod4 <- lm(price ~ review_scores_rating, data = train)
+mod5 <- lm(price ~ superhost_dummy, data = train)
+
+mod1_metric <- augment(mod1)
+mod2_metric <- augment(mod2)
+mod3_metric <- augment(mod3)
+mod4_metric <- augment(mod4)
+mod5_metric <- augment(mod5)
+
+
+ggplot(mod1_metric, aes(room_type_dummy, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = room_type_dummy, yend = .fitted), color = "red", size = 0.3)
+
+ggplot2 <- ggplot(mod2_metric, aes(accommodates, price), xlab = 'Price', ylab= 'Total Accommodates', title = 'Total Accommodates vs Price') +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = accommodates, yend = .fitted), color = "red", size = 0.3)
+
+ggplot(mod3_metric, aes(beds, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = beds, yend = .fitted), color = "red", size = 0.3)
+
+ggplot(mod4_metric, aes(review_scores_rating, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = review_scores_rating, yend = .fitted), color = "red", size = 0.3)
+
+ggplot(mod5_metric, aes(superhost_dummy, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = superhost_dummy, yend = .fitted), color = "red", size = 0.3)
+
+```
+
+
+```{r, include = FALSE}
+#create multiple linear regression model
+full_mod <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train)
+plot(full_mod, which = 3, main = 'Square Root Standardized Residual vs Fitted Plot for the Full Model')
+plot(full_mod, which = 2, main = 'Normal Q-Q Plot for the Full Model')
+```
+
+
+```{r, include = FALSE}
+#box-cox transformation for the full model
+library(MASS)
+b1 <- boxcox(lm(accommodates ~ 1, data = train))
+lambda <- b1$x[which.max(b1$y)]
+train$accommodates <- (train$accommodates^lambda - 1)/lambda
+train$price <- log(train$price)
+test$accommodates <- (test$accommodates^lambda - 1)/lambda
+test$price <- log(test$price)
+mod2_bc <- lm(price ~ accommodates, data = train)
+plot(mod2_bc, which = 2, main = 'Normal Q-Q Plot for Accommodates Variable')
+
+b2 <- boxcox(lm(beds ~ 1, data = train))
+lambda2 <- b2$x[which.max(b2$y)]
+train$beds <- (train$beds^lambda2 - 1)/lambda2
+train$price <- log(train$price)
+test$beds <- (test$beds^lambda2 - 1)/lambda2
+test$price <- log(test$price)
+mod3_bc <- lm(price ~ beds, data = train)
+plot(mod3_bc, which = 2, main = 'Normal Q-Q Plot for Beds Variable')
+
+
+```
+
+### 2.3 Checking Multicollinearity and Influential Points
+
+To check multicollinearity, I can use the VIF (Variance Inflation Factors) to see whether two or more independent variables are highly correlated, which means the VIF score has to be lower than 5 to fulfill the multicollinearity. Furthermore, I need to check the influential points in the training dataset using Cook's Distance, DFFITS, and DFBETAS. If any influential points are presented in the plot, I need to remove the points by using one of either of the three methods specified.
+
+```{r, include = FALSE}
+library(car)
+full_model <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train)
+vif_test <- vif(full_model)
+#kable(vif_test, caption = 'Numerical Summaries for the Census Data', col.names = c('VIF Test'))
+```
+
+
+```{r, include  = FALSE}
+# Using Cook's Distance
+model_full <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train)
+D <- cooks.distance(model_full)
+lev<- which(D > 12/(nrow(train)-2))
+
+par(family = 'serif')
+plot1 <- plot(model_full$fitted.values, D,
+     main = "Cook's Distance of the Full Model", xlab="Fitted Values", ylab="Cook's Distance", 
+     col = ifelse(D > 12/(nrow(train)-2), "red", "blue"))
+abline(h = 2, lty = 2) 
+abline(h = -2, lty = 2) 
+text(model_full$fitted.values[D > 12/(nrow(train)-2)]+0.5, D[D > 12/(nrow(train)-2)], 
+     labels = which(D > 12/(nrow(train)-2)) )
+
+```
+
+
+```{r, include = FALSE}
+# After removing influential points using Cook's Distance
+influential <- as.numeric(names(D)[(D > (12/(nrow(train)-2)))])
+train2 <- train[-influential, ]
+model_full_2 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train2)
+plot(model_full_2, which = 2,3, main = 'Normal Q-Q Plot without Influential Point')
+```
+
+```{r, include = FALSE}
+## DFFITS ##
+dfits <- dffits(model_full)
+influential_dfits <- as.numeric((abs(dfits) > 2*sqrt(6/216)))
+train3 <- train[-influential_dfits, ]
+model_full_2 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train3)
+plot(model_full_2, which = 2,3)
+
+## DFBETAS ##
+dfb <- dfbetas(model_full)
+influential_dfb <- as.numeric((abs(dfb) > 2*sqrt(6/216)))
+train4 <- train[-influential_dfb, ]
+model_full_2 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train4)
+plot(model_full_2, which = 2,3)
+```
+
+
+### 2.4 Model Selection
+
+This model combination will help us to determine the confidence and prediction interval, which will be calculated in the last process. I used different types of Forward/ Backward Stepwise Regression of AIC, BIC, and Group Lasso to determine the best model. Each method will give a combination of predictor variables that provide the mean squared error, mean absolute error, and prediction error. The method that will give the lowest value in each error will be chosen. 
+
+```{r, include = FALSE}
+#Model Selection Criteria
+criteria <- function(model){
+  n <- length(model$residuals)
+  p <- length(model$coefficients) - 1
+  RSS <- sum(model$residuals^2)
+  R2 <- summary(model)$r.squared
+  R2.adj <- summary(model)$adj.r.squared
+  AIC <- n*log(RSS/n) + 2*p
+  AICc <- AIC + (2*(p+2)*(p+3))/(n-p-1)
+  BIC <- n*log(RSS/n) + (p+2)*log(n)
+  res <- c(R2, R2.adj, AIC, AICc, BIC)
+  names(res) <- c("R Squared", "Adjusted R Squared", "AIC", "AICc", "BIC")
+  return(res)
+}
+
+reduced_mod1 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train2) #full model
+reduced_mod2 <- lm(price ~ accommodates + beds + review_scores_rating + superhost_dummy, data = train2) #4 vars
+reduced_mod3 <- lm(price ~ room_type_dummy + beds + review_scores_rating + superhost_dummy, data = train2)
+reduced_mod4 <- lm(price ~ room_type_dummy + accommodates + review_scores_rating + superhost_dummy, data = train2)
+reduced_mod5 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating, data = train2)
+reduced_mod6 <- lm(price ~ room_type_dummy + accommodates + beds + superhost_dummy, data = train2)
+reduced_mod7 <- lm(price ~ room_type_dummy + accommodates + beds, data = train2)
+reduced_mod8 <- lm(price ~ room_type_dummy + accommodates + review_scores_rating, data = train2)
+reduced_mod9 <- lm(price ~ room_type_dummy + accommodates + superhost_dummy, data = train2)
+reduced_mod10 <- lm(price ~ room_type_dummy + beds + review_scores_rating, data = train2)
+reduced_mod11 <- lm(price ~ room_type_dummy + beds + superhost_dummy, data = train2)
+reduced_mod12 <- lm(price ~ room_type_dummy + superhost_dummy + review_scores_rating, data = train2)
+reduced_mod13 <- lm(price ~ beds + accommodates + review_scores_rating, data = train2)
+reduced_mod14 <- lm(price ~ beds + superhost_dummy + accommodates, data = train2)
+reduced_mod15 <- lm(price ~ beds + superhost_dummy + review_scores_rating, data = train2)
+reduced_mod16 <- lm(price ~ superhost_dummy + accommodates + review_scores_rating, data = train2)
+
+
+
+crit1 <- criteria(model = reduced_mod1)
+crit2 <- criteria(model = reduced_mod2)
+crit3 <- criteria(model = reduced_mod3)
+crit4 <- criteria(model = reduced_mod4)
+crit5 <- criteria(model = reduced_mod5)
+crit6 <- criteria(model = reduced_mod6)
+crit7 <- criteria(model = reduced_mod7)
+crit8 <- criteria(model = reduced_mod8)
+crit9 <- criteria(model = reduced_mod9)
+crit10 <- criteria(model = reduced_mod10)
+crit11 <- criteria(model = reduced_mod11)
+crit12 <- criteria(model = reduced_mod12)
+crit13 <- criteria(model = reduced_mod13)
+crit14 <- criteria(model = reduced_mod14)
+crit15 <- criteria(model = reduced_mod15)
+crit16 <- criteria(model = reduced_mod16)
+
+```
+
+```{r, include = FALSE}
+library(car)
+library(Matrix)
+library(MPV)
+library(glmnet)
+library(rms)
+library(MASS)
+library(gglasso)
+library(pls)
+library(psych)
+## Step wise regression ###
+
+## Based on AIC ##
+set.seed(56739)
+model.lm <- lm(train2$price ~ ., data = train2[, -c(1)])
+summary(model.lm)  
+n <- nrow(train2)
+sel.var.aic <- step(model.lm, trace = 0, k = 2, direction = "both") 
+sel.var.aic<-attr(terms(sel.var.aic), "term.labels")   
+sel.var.aic
+
+## Based on BIC ##
+set.seed(36378)
+model.lm <- lm(train2$price ~ ., data = train2[, -c(1)])
+summary(model.lm)  
+n <- nrow(train2)
+sel.var.bic <- step(model.lm, trace = 0, k = log(n), direction = "both") 
+sel.var.bic<-attr(terms(sel.var.bic), "term.labels")   
+sel.var.bic
+
+### LASSO selection ###
+
+library(gglasso)
+set.seed(1005878436)
+group1 <- rep(1:5,each=1)
+
+# fit group lasso penalized least squares
+group_lasso <- cv.gglasso(x = as.matrix(train2[,2:6]), y = train2$price , group = group1,loss="ls")
+
+best.lambda1 <- group_lasso$lambda.1se
+co1<-coef(group_lasso, s = "lambda.1se")
+
+## threshold for variable selection ##
+
+thresh1 <- 0.00
+# select variables #
+inds1<-which(abs(co1) > thresh1 )
+variables1<-row.names(co1)[inds1]
+sel.var.grouplasso<-variables1[!(variables1 %in% '(Intercept)')]
+sel.var.grouplasso
+
+```
+
+
+
+```{r, include = FALSE}
+
+### Cross Validation and prediction performance of AIC based selection ###
+ols.aic <- ols(price ~., data = train2[,which(colnames(train2) %in% c(sel.var.aic, "price"))], x = T, y = T, model = T)
+
+## 3 fold cross validation ##    
+aic.cross <- calibrate(ols.aic, method = "crossvalidation", B = 3)
+
+## Calibration plot ##
+plot(aic.cross, las = 1, xlab = "Predicted Price", main = "Cross-Validation calibration with AIC")
+
+## Test Error ##
+pred.aic <- predict(ols.aic, newdata = test[,which(colnames(train2) %in% c(sel.var.aic, "price"))])
+## Prediction error ##
+pred.error.AIC <- mean((test$price - pred.aic)^2)
+
+
+### Cross Validation and prediction performance of BIC based selection ###
+ols.bic <- ols(price ~ ., data = train2[,which(colnames(train2) %in% c(sel.var.bic, "price"))], 
+               x=T, y=T, model = T)
+
+## 3 fold cross validation ##    
+bic.cross <- calibrate(ols.bic, method = "crossvalidation", B = 3)
+## Calibration plot ##
+plot(bic.cross, las = 1, xlab = "Predicted Price", main = "Cross-Validation calibration with BIC")
+
+## Test Error ##
+pred.bic <- predict(ols.bic, newdata = test[,which(colnames(train2) %in% c(sel.var.bic, "price"))])
+## Prediction error ##
+pred.error.BIC <- mean((test$price - pred.bic)^2)
+
+### Cross Validation and prediction performance of GROUP lasso based selection ###
+ols.lasso <- ols(price ~., data = train2[,which(colnames(train2) %in% c(sel.var.grouplasso, "price"))], 
+                 x=T, y=T, model = T)
+
+## 3 fold cross validation ##    
+lasso.cross <- calibrate(ols.lasso, method = "crossvalidation", B = 3)
+
+## Calibration plot ##
+plot(lasso.cross, las = 1, xlab = "Predicted Price", main = "Cross-Validation calibration with LASSO")
+
+## Test Error ##
+pred.lasso <- predict(ols.lasso, newdata = test[,which(colnames(train2) %in% c(sel.var.grouplasso, "price"))])
+## Prediction error ##
+pred.error.lasso <- mean((test$price - pred.lasso)^2)
+
+#Mean Absolute Error
+library(Metrics)
+mae1 <- mae(train2$price, pred.aic)
+mae2 <- mae(train2$price, pred.bic)
+mae3 <- mae(train2$price, pred.lasso)
+mse1 <- mse(train2$price, pred.aic)
+mse2 <- mse(train2$price, pred.bic)
+mse3 <- mse(train2$price, pred.lasso)
+rbind(mae1, mae2, mae3, mse1, mse2, mse3)
+```
+
+```{r, include = FALSE}
+dataframe <- data.frame(pred.error.AIC, pred.error.BIC, pred.error.lasso)
+kable(dataframe, col.names = c('Prediction Error with AIC', 'Prediction Error with BIC', 'Prediction Error with Group Lasso'), caption = 'Prediction Error of different Stepwise Regression')
+```
+
+## 2.5 Checking Variable's Assumption after Stepwise Regression
+
+I need to verify the assumption of the updated model with the same approach as 2.2.
+
+```{r, include = FALSE}
+#recheck the linearity assumption
+library(dplyr)
+library(broom)
+library(ggplot2)
+#create scatterplot to check independence for each predictor variables
+mod_1 <- lm(price ~ room_type_dummy, data = train2)
+mod_2 <- lm(price ~ accommodates, data = train2)
+mod_3 <- lm(price ~ review_scores_rating, data = train2)
+
+mod.1_metric <- augment(mod_1)
+mod.2_metric <- augment(mod_2)
+mod.3_metric <- augment(mod_3)
+
+
+ggplot(mod.1_metric, aes(room_type_dummy, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = room_type_dummy, yend = .fitted), color = "red", size = 0.3)
+
+ggplot(mod.2_metric, aes(accommodates, price), xlab = 'Price', ylab= 'Total Accommodates', title = 'Total Accommodates vs Price') +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = accommodates, yend = .fitted), color = "red", size = 0.3)
+
+ggplot(mod.3_metric, aes(review_scores_rating, price)) +
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = review_scores_rating, yend = .fitted), color = "red", size = 0.3)
+
+new_model <- lm(price ~ accommodates + room_type_dummy + review_scores_rating, data = train2)
+plot(new_model, which = 3, main = 'Square Root Standardized Residual vs Fitted Plot for the Updated Model')
+plot(new_model, which = 2, main = 'Normal Q-Q Plot for the Updated Model')
+
+```
+
+
+## 2.6 ANCOVA/ANOVA Test
+
+Since I have accounted for the covariates of the data, I would like to analyze if there is a statistically significant difference between the three variables that I have chosen from the Group Lasso method. If categorical variables are chosen from the method stated in the previous part, I will use the ANCOVA method instead of ANOVA. Then, I can interpret the result of the ANCOVA/ANOVA table to see whether it is statistically significant from the test statistics. It follows with a computation of the 95% of confidence and prediction interval. I also can count for the prediction error by using a formula $ abs(realvalue-pred)/real value $, where the real value is the value in the testing dataset and pred is the prediction price.
+```{r, include = FALSE}
+#based on group lasso, I will use room_type_dummy, accommodates, and review_scores_rating
+ancova_model <- lm(price ~ accommodates + as.factor(room_type_dummy) + accommodates*as.factor(room_type_dummy) + review_scores_rating + review_scores_rating*as.factor(room_type_dummy), data = train2)
+table <- Anova(ancova_model, type= 2)
+
+ancova_model2 <- lm(price ~ accommodates + as.factor(room_type_dummy) + review_scores_rating + review_scores_rating*as.factor(room_type_dummy), data = train2)
+table2 <- Anova(ancova_model2, type= 2)
+kable(table2, caption = 'ANCOVA Table with only Significant Variables')
+
+```
+
+```{r, include = FALSE}
+#find confidence and prediction interval
+conf_inter <- confint(ancova_model2)
+predict_data <- data.frame(room_type_dummy = test$room_type_dummy[1], accommodates = test$accommodates[1], review_scores_rating = test$review_scores_rating[1])
+pred <- predict(ancova_model2, newdata = predict_data)
+realvalue <- test$price[6]
+realvalue
+error<- abs(realvalue-pred)/realvalue
+error
+pred_inter <- predict(ancova_model2, newdata = train, type = 'response', interval = 'prediction', level = 0.95)
+dataframe_2 <- data.frame(conf_inter, pred)
+kable(dataframe_2, caption = 'Confidence and Prediction Interval')
+```
+
+
+## 3. Results
+
+### 3.1 Assumptions
+Upon looking at the scatterplot of each predictor variable, all predictor variables fulfilled the linearity assumption since they showed a linear relationship with the price variable. One of the scatterplots of the 'accommodates' variable is shown below. Next, the square root of the standardized residual vs fitted value of the full model shows a pattern, so a box-cox transformation will be used to remove those patterns. After I used the transformation using log(price) and maximum lambda, the graph showed no pattern, and the residuals had a pretty flat line, such that the independence and homoscedasticity assumptions were met. On the Normal Q-Q plot after the transformation, I can see a linear pattern for all of the points, so the normality assumption has also been met.
+
+```{r, echo = FALSE, message= FALSE}
+ggplot2 <- ggplot(mod2_metric, aes(accommodates, price)) + ggtitle("Figure 1: Total Accommodates vs Price") +
+  xlab("Price") + ylab("Total Accommodates") + 
+  geom_point() +
+  stat_smooth(method = lm, se = FALSE) +
+  geom_segment(aes(xend = accommodates, yend = .fitted), color = "red", size = 0.3)
+ggplot2
+```
+
+
+### 3.2 Multicollinearity and Influential Points
+
+Using the VIF method, each predictor variable has a VIF score lower than 5, so I can keep all the variables in our model. Furthermore, in Cook's Distance graph below, the red points represent the influential points that need to be removed. After I subset the data and removed all the influential points, I have a linear Normal Q-Q plot without any influential points being shown here. 
+
+```{r, echo = FALSE}
+model_full <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train)
+D <- cooks.distance(model_full)
+lev<- which(D > 12/(nrow(train)-2))
+
+par(family = 'serif')
+plot1 <- plot(model_full$fitted.values, D,
+     main = "Figure 2: Cook's Distance of the Full Model", xlab="Fitted Values", ylab="Cook's Distance", 
+     col = ifelse(D > 12/(nrow(train)-2), "red", "blue"))
+abline(h = 2, lty = 2) 
+abline(h = -2, lty = 2) 
+text(model_full$fitted.values[D > 12/(nrow(train)-2)]+0.5, D[D > 12/(nrow(train)-2)], 
+     labels = which(D > 12/(nrow(train)-2)) )
+```
+
+```{r, echo = FALSE, warning= FALSE}
+influential <- as.numeric(names(D)[(D > (12/(nrow(train)-2)))])
+train2 <- train[-influential, ]
+model_full_2 <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = train2)
+par(mfrow=c(1,1), fg="white")
+plot(model_full_2, which=2, col="black", ann=FALSE, sub="", axes=FALSE)
+box(col="black"); axis(1, col="black", col.ticks="black"); axis(2, col="black", col.ticks="black")
+title(xlab="Theoretical Quantiles", ylab=" Standardized Residuals", 'Figure 3: Normal Q-Q Plot without Influential Point')
+par(mfrow=c(1,1), fg="black")
+```
+
+
+### 3.3 Model Selection
+
+Upon looking at the prediction error, the mean squared error, and the mean absolute error of each stepwise regression method, the BIC and the Group Lasso method have the same value of the lowest value of the mean squared error, and the mean absolute error, and the prediction error so I can choose our predictor variables of the method based on either one of the methods. Both the BIC and The Group Lasso recommended using only 3 predictor variables: ' room_type_dummy', 'review_scores_rating', and 'accommodates'. 
+
+```{r, echo = FALSE}
+pred.error <- rbind(pred.error.AIC, pred.error.BIC, pred.error.lasso)
+mae.error <- rbind(mae1,mae2, mae3)
+mse.error <- rbind(mse1, mse2, mse3)
+dataframe <- tibble('Method' = c('AIC', 'BIC', 'Group Lasso'), 'Prediction Error' = pred.error, 'Mean Absolute Error' = mae.error, 'Mean Squared Error' = mse.error)
+kable(dataframe, caption = "Different Methods of Model Selection")
+```
+
+
+### 3.4 ANCOVA, Confidence Interval, and Prediction Interval
+
+I also need to verify the updated model using a similar approach as in 2.2. Since there is one categorical variable here, I will use the ANCOVA table for our model. Using a p-value of 0.05, the interaction between room_type_dummy and accommodates have a value greater than 0.05, meaning they are insignificant. Thus, I can dispense this interaction and conclude that there is a dependent relationship between room_type_dummy and accommodates. Then, I removed the insignificant variables from the ANCOVA table and created a new one with just the significant variables.
+
+In addition to that, I included a random entry of the training dataset (price = 117, accommodates = 1, review_scores_rating  = 4.94). I also get a prediction error of 1.89%, which is considerably small. I also checked with other random entries, and the result is similar.
+
+```{r, echo = FALSE, message = FALSE}
+ancova_model <- lm(price ~ accommodates + as.factor(room_type_dummy) + accommodates*as.factor(room_type_dummy) + review_scores_rating + review_scores_rating*as.factor(room_type_dummy), data = train2)
+table <- Anova(ancova_model, type= 2)
+
+ancova_model2 <- lm(price ~ accommodates + as.factor(room_type_dummy) + review_scores_rating + review_scores_rating*as.factor(room_type_dummy), data = train2)
+table2 <- Anova(ancova_model2, type= 2)
+kable(table2, caption = 'ANCOVA Table with only Significant Variables')
+```
+
+
+## 4. Discussion
+
+### 4.1 Influential Points
+The influential points can be determined using Cook's Distance, DFFITS, or DFBETAS. Cook's Distance calculates each observation's leverage and residual values, DFFITS calculates the effect of each observation on all of the fitted values, and DFBETAS calculates showed observations that are influential in a given parameter. All methods are calculated in this paper to strengthen the accuracy of the result. 
+
+
+### 4.2 Model Selection
+The Group Lasso method is used in this paper instead of the regular lasso because our model consists of categorical variables. I grouped five observations into a group of 5 and calculated the prediction error based on this group. Since all of the BIC and Group Lasso values are similar, I can choose either method. However, I choose the Group Lasso method for this paper. 
+
+## 4.3 Final Model Analysis
+In the final model of the ANCOVA, I have three predictor variables and one dependent variable between review_scores_rating and room_type_dummy. The interpretation of the model is for every increase in the number of accommodates, the price increase by approximately 0.166. Furthermore, the price increased by 0.196 if the room of Airbnb is private. The price increased by 0.066 and 0.03 for every increase of 1.0 and 1.0 in review_scores_rating and as.factor(room_type_dummy):review_scores_rating, respectively.
+
+### 4.4 Limitations of the Analysis
+My model still has a pattern shown in the Residual vs Fitted plot, even after I did a transformation with box-cox transformation. Perhaps another type of transformation can be used here, like a square root or log transformation. The normal Q-Q plot also shows some nonlinearity in the bigger or upper points, which can happen due to some datasets that are not reasonable. All of these violations can affect the overall model performance. Furthermore, my analysis of the stepwise regression with BIC and Lasso showed a similar result, and with such removal of the data points from the argument above, it can also affect the model selection.
+
+
+## 5. Bibliography
+
+1. About Us. Airbnb Newsroom. (2022, December 15). Retrieved December 20, 2022, from https://news.airbnb.com/about-us/ 
+2. Inside Airbnb. (n.d.). Retrieved October 20, 2022, from http://insideairbnb.com/get-the-data/ 
+3. Folger, J. (2022, July 12). How airbnb works. Investopedia. Retrieved October 20, 2022, from https://www.investopedia.com/articles/personal-finance/032814/pros-and-cons-using-airbnb.asp#:~:text=Airbnb%20is%20an%20online%20marketplace,some%20income%20from%20their%20property. 
+4. Librarysearch.library.utoronto.ca. (n.d.). Retrieved October 20, 2022, from https://librarysearch.library.utoronto.ca/discovery/fulldisplay?docid=cdi_elsevier_sciencedirect_doi_10_1016_j_jhtm_2020_08_015&context=PC&vid=01UTORONTO_INST%3AUTORONTO&lang=en&search_scope=UTL_AND_CI&adaptor=Primo+Central&tab=Everything&query=any%2Ccontains%2Cairbnb+price+regression&offset=0 
+5. Hedonic pricing and the sharing economy: How profile characteristics affect airbnb accommodation prices in Barcelona, Madrid, and Seville. Taylor & Francis. (n.d.). Retrieved October 20, 2022, from https://www.tandfonline.com/doi/full/10.1080/13683500.2020.1718619 
+6. Customized regression model for Airbnb dynamic pricing. SIGKDD - KDD 2018. (2018, May 18). Retrieved October 20, 2022, from https://www.kdd.org/kdd2018/accepted-papers/view/customized-regression-model-for-airbnb-dynamic-pricing 
+7. Dye, S. (2020, February 19). Quantile regression. Medium. Retrieved October 20, 2022, from https://towardsdatascience.com/quantile-regression-ff2343c4a03 
+8. Prabhakaran, S. (n.d.). Assumptions of Linear Regression. 10 Assumptions of Linear Regression - Full List with Examples and Code. Retrieved October 20, 2022, from http://r-statistics.co/Assumptions-of-Linear-Regression.html 
+
+## 6. Appendix
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+kable(vif_test, caption = 'VIF Test', col.names = c('VIF Score'))
+
+old_model <- lm(price ~ room_type_dummy + accommodates + beds + review_scores_rating + superhost_dummy, data = df)
+par(mfrow=c(1,1), fg="white")
+plot(old_model, which=1, col=df$price, ann=FALSE, sub="", axes=FALSE)
+box(col="black"); axis(1, col="black", col.ticks="black"); axis(2, col="black", col.ticks="black")
+title(xlab="Residual", ylab="Fitted Values", 'Figure 4: Normal Q-Q Plot with Outliers')
+par(mfrow=c(1,1), fg="black")
+
+kable(table, caption = 'ANCOVA Table before Any Removal')
+```
+
